@@ -106,13 +106,19 @@ def baixar_tesouro(tentativas=4):
     """Baixa o CSV do Tesouro, tentando de novo se o servidor limitar (429) ou falhar (5xx)."""
     cabecalho = {"User-Agent": "Mozilla/5.0 (monitor-investimentos)"}
     for i in range(tentativas):
-        r = requests.get(TESOURO_CSV, headers=cabecalho, timeout=180)
-        if r.status_code != 429 and r.status_code < 500:
+        ultima = i == tentativas - 1
+        try:
+            r = requests.get(TESOURO_CSV, headers=cabecalho, timeout=180)
+        except requests.ConnectionError:
+            if ultima:
+                raise
+            time.sleep(15 * (i + 1))
+            continue
+        if r.status_code != 429 and r.status_code < 500 or ultima:
             break
-        if i < tentativas - 1:
-            retry = r.headers.get("Retry-After", "")
-            espera = min(int(retry), 120) if retry.isdigit() else 0
-            time.sleep(max(espera, 15 * (i + 1)))
+        retry = r.headers.get("Retry-After", "")
+        espera = min(int(retry), 120) if retry.isdigit() else 0
+        time.sleep(max(espera, 15 * (i + 1)))
     r.raise_for_status()
     return r
 
