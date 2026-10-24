@@ -7,6 +7,7 @@ import io
 import json
 import math
 import os
+import time
 import datetime as dt
 
 import numpy as np
@@ -101,9 +102,23 @@ def classificar_tesouro(tipo, taxa, percentil, macro, cfg):
     return "NEUTRO", f"Taxa dentro da faixa histórica{pct}. Leve a mercado só se for ficar até o vencimento."
 
 
-def coletar_tesouro(macro, cfg):
-    r = requests.get(TESOURO_CSV, timeout=180)
+def baixar_tesouro(tentativas=4):
+    """Baixa o CSV do Tesouro, tentando de novo se o servidor limitar (429) ou falhar (5xx)."""
+    cabecalho = {"User-Agent": "Mozilla/5.0 (monitor-investimentos)"}
+    for i in range(tentativas):
+        r = requests.get(TESOURO_CSV, headers=cabecalho, timeout=180)
+        if r.status_code != 429 and r.status_code < 500:
+            break
+        if i < tentativas - 1:
+            retry = r.headers.get("Retry-After", "")
+            espera = min(int(retry), 120) if retry.isdigit() else 0
+            time.sleep(max(espera, 15 * (i + 1)))
     r.raise_for_status()
+    return r
+
+
+def coletar_tesouro(macro, cfg):
+    r = baixar_tesouro()
     try:
         texto = r.content.decode("utf-8")
     except UnicodeDecodeError:
@@ -346,7 +361,9 @@ def enviar(alertas, cfg):
         if PAGES_URL:
             payload["click"] = PAGES_URL
         try:
-            requests.post(NTFY_SERVER, json=payload, timeout=20).raise_for_status()
+            resp = requests.post(NTFY_SERVER, json=payload, timeout=20)
+            if not resp.ok:
+                erros.append(f"ntfy: HTTP {resp.status_code} {resp.text.strip()[:200]}")
         except Exception as e:
             erros.append(f"ntfy: {e}")
 
